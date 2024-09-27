@@ -12,7 +12,7 @@ prep: $(OBJECTS)
 	avr-objcopy -O ihex -R .eeprom build/main.elf build/main.hex
 	
 prog: prep
-	avrdude -c usbasp-clone -p m168 -U flash:w:build/main.hex:a 
+	avrdude -c usbasp-clone -p m168 -U flash:w:build/main.hex:a -U eeprom:w:"C:\Users\Max\Documents\ibutton\build\main.eep":i
 
 reset-device:
 	avrdude -c usbasp-clone -p m168	
