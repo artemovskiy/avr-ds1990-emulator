@@ -14,5 +14,8 @@ prep: $(OBJECTS)
 prog: prep
 	avrdude -c usbasp-clone -p m168 -U flash:w:build/main.hex:a 
 
+reset-device:
+	avrdude -c usbasp-clone -p m168	
+
 clean:
 	rm $(OBJECTS)
