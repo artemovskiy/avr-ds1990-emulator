@@ -4,160 +4,145 @@
 
 #define BAUD 9600L
 
-#define UBRR_value F_CPU / (BAUD * 16) - 1
-
 #include <avr/io.h>
 #include <util/delay.h>
-#include <stdbool.h>
-#include "pindef.h"
+#include <avr/interrupt.h>
 #include "onewire.h"
-#include "ds18b20.h"
+#include "pindef.h"
 
-void Transmit_UData(unsigned char data)
+#define RESET_LENGTH 350
+#define MAX_WAITING_FOR_RISE 200
+
+volatile char wait_reset = 0;
+volatile uint16_t reset_counter = 0;
+volatile uint16_t wait_rise = 0;
+volatile char wait_tick = 0;
+volatile char tick_idx = 0;
+uint8_t cmd = 0;
+volatile uint8_t wait_r = 0;
+volatile uint8_t ri = 0;
+uint8_t n = 0xC5;
+
+char bytes_len = 8;
+volatile uint8_t byte_idx = 0;
+const uint8_t serial[8] = {0x01, 0xF1, 0xCF, 0x7B, 0x14, 0, 0, 0xDD};
+
+ISR(INT0_vect)
 {
-   while (!(UCSR0A & (1 << UDRE0)))
-      ; /// wait till transmit buffer empty
-   UDR0 = data;
+   wait_reset = 1;
 }
 
-volatile unsigned char t;
-unsigned char k;
-
-const gpin_t sensorPin = {&PORTC, &PINC, &DDRC, PC2};
-char digitToASCII(char d)
-{
-   if (0 <= d && d <= 9)
-   {
-      return d + '0';
-   }
-   if (0xA <= d && d <= 0xF)
-   {
-      return d - 10 + 'A';
-   }
-   return 0;
-}
-void bytoToHexASCII(uint8_t byte, char *result)
-{
-   result[1] = digitToASCII(byte / 16);
-   result[0] = digitToASCII(byte % 16);
-}
-void snedInt(uint8_t tmp)
-{
-   char out[2];
-   bytoToHexASCII(tmp, out);
-
-   Transmit_UData(out[1]);
-   Transmit_UData(out[0]);
-}
-
-void UartSendString(char *str, uint8_t len)
-{
-   for (uint8_t i = 0; i < len; i++)
-   {
-      Transmit_UData(str[i]);
-   }
-}
-char USART_Receive(void)
-{
-   // venter på at data bliver modtaget
-   while (!(UCSR0A & (1 << RXC0)))
-      ;
-   // hent og retuner modtaget data fra bufferen
-   return UDR0;
-}
-
+gpin_t onewire_pin = {&PORTD, &PIND, &DDRD, PD2};
+gpin_t D_pin = {&PORTC, &PINC, &DDRC, PC0};
 void main(void)
 {
-   DDRC |= 0b00000011;
-   // PORTC |= 0b00000010;
-   UCSR0C = 0b00000110;
-   UCSR0B |= (1 << TXEN0) | (1 << RXEN0);
-   // speed
-   UBRR0 = UBRR_value;
+   DDRC |= (1 << PC0);
+   DDRD = (1 << PD4);
+   PORTD &= ~(1 << PD4);
 
-   char wordBuffer[32];
-   unsigned char wordSize;
+   // int setup
+   EICRA |= (1 << ISC01); // trigger on falling edge
+   EIMSK |= (1 << INT0);  // enable int on INT0 pin
 
-         Transmit_UData('>');
+   // init completed signal
+   PORTC |= (1 << PC0);
+   _delay_ms(100);
+   PORTC &= ~(1 << PC0);
+
+   sei();
+
    while (1)
    {
-      unsigned char r = USART_Receive();
-      if (false)
+      if (wait_reset)
       {
-         char debug[16];
-         int len = sprintf(debug, "Debug: %X\r\n", r);
-         UartSendString(debug, len);
+         if (reset_counter >= RESET_LENGTH)
+         {
+            wait_reset = 0;
+            wait_rise = 1;
+            cli();
+            reset_counter = 0;
+         }
+         else
+         {
+            _delay_us(10);
+            reset_counter += 10;
+         }
+         continue;
       }
-      switch (r)
+
+      if (wait_rise)
       {
-      case 0xD: // ENTER
-         Transmit_UData('\r');
-         Transmit_UData('\n');
-         UartSendString(wordBuffer, wordSize);
-         Transmit_UData('\r');
-         Transmit_UData('\n');
-         Transmit_UData('>');
-         wordSize = 0;
-         break;
-      case 0x7F:
-         wordSize--;
-         Transmit_UData(r);
-         break;
-      default:
-         wordBuffer[wordSize] = r;
-         Transmit_UData(r);
-         wordSize++;
+         while (!(PIND & (1 << PD2)))
+            ;
+         wait_rise = 0;
+         _delay_us(15);
+         PORTD |= (1 << PD4);
+         _delay_us(60);
+         PORTD &= ~(1 << PD4);
+         _delay_us(10);
+         wait_tick = 1;
+
+         continue;
       }
-      // PORTC &= ~((1 << PC0) | (1 << PC1));
-      // onewire_search_state state;
-      // if (onewire_reset(&sensorPin))
-      // {
-      //    onewire_search_init(&state);
-      //    bool result = onewire_search(&sensorPin, &state);
-      //    if (result)
-      //    {
-      //       PORTC |= (1 << PC0);
-      //       UartSendString("Number: ", 8);
-      //       for (uint8_t i = 0; i < 8; i++)
-      //       {
-      //          snedInt(state.address[i]);
-      //       }
-      //    }
-      //    else
-      //    {
-      //       UartSendString("Read failed", 11);
-      //       PORTC |= (1 << PC1);
-      //    }
-      //    Transmit_UData('\r');
-      //    Transmit_UData('\n');
-      //    // // Start a temperature reading (this includes skiprom)
-      //    // ds18b20_convert(&sensorPin);
+      if (wait_tick)
+      {
 
-      //    // // Wait for measurement to finish (750ms for 12-bit value)
-      //    // _delay_ms(750);
+         while (PIND & (1 << PD2))
+            ;
+         PORTC |= (1 << PC0);
+         _delay_us(40);
+         PORTC &= ~(1 << PC0);
+         if (PIND & (1 << PD2))
+         {
+            cmd += 1 << tick_idx;
+         }
+         else
+         {
+            while (!(PIND & (1 << PD2)))
+               ;
+         }
+         tick_idx++;
 
-      //    // // Get the raw 2-byte temperature reading
-      //    // int16_t reading = ds18b20_read_single(&sensorPin);
-
-      //    // if (reading != kDS18B20_CrcCheckFailed)
-      //    // {
-      //    //    // Convert to floating point (or keep as a Q12.4 fixed point value)
-      //    //    float temperature = ((float)reading) / 16;
-
-      //    //    // Transmit_UData((int)temperature);
-      //    //    //  Transmit_UData('\r');
-      //    //    //  Transmit_UData('\n');
-
-      //    //    uint16_t tmp = (int) temperature;
-
-      //    //    PORTC |= (1 << PC0);
-      //    // }
-      //    // else
-      //    // {
-      //    //    PORTC |= (1 << PC1);
-      //    // }
-
-      //    _delay_ms(1000);
-      // }
+         if (tick_idx > 7)
+         {
+            wait_tick = false;
+            if (cmd == 0x33)
+            {
+               wait_r = 1;
+            }
+         }
+         continue;
+      }
+      if (wait_r)
+      {
+         if (byte_idx >= bytes_len)
+         {
+            wait_r = 0;
+            byte_idx = 0;
+            PORTC |= (1 << PC0);
+            _delay_ms(100);
+            PORTC &= ~(1 << PC0);
+            sei();
+            continue;
+         }
+         PORTC &= ~(1 << PC0);
+         if (ri > 7)
+         {
+            ri = 0;
+            byte_idx++;
+            continue;
+         }
+         while (PIND & (1 << PD2))
+            ;
+         PORTC |= (1 << PC0);
+         n = serial[byte_idx];
+         if ((n >> ri) % 2 == 0)
+         {
+            PORTD |= (1 << PD4);
+            _delay_us(60);
+            PORTD &= ~(1 << PD4);
+         }
+         ri++;
+      }
    }
 }
