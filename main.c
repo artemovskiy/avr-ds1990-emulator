@@ -17,6 +17,7 @@ volatile uint8_t wr = 0;
 volatile char wait_reset = 0;
 volatile uint16_t reset_counter = 0;
 volatile uint16_t wait_rise = 0;
+volatile uint16_t rise_cnt = 0;
 volatile char wait_tick = 0;
 volatile char tick_idx = 0;
 uint8_t cmd = 0;
@@ -67,6 +68,7 @@ void main(void)
    {
       if (wait_reset)
       {
+
          if (reset_counter >= RESET_LENGTH)
          {
             wait_reset = 0;
@@ -83,27 +85,36 @@ void main(void)
 
       if (wait_rise)
       {
+         if (rise_cnt > MAX_WAITING_FOR_RISE)
+         {
+            wait_rise = 0;
+            rise_cnt = 0;
+            wr = 1;
+            continue;
+         }
+         if (PIND & (1 << PD2))
+         {
+            _delay_us(15);
 
-         while (!(PIND & (1 << PD2)))
-            ;
-         wait_rise = 0;
-         _delay_us(15);
-         PORTD |= (1 << PD4);
-         _delay_us(60);
-         PORTD &= ~(1 << PD4);
-         _delay_us(10);
-         wait_tick = 1;
-
-         continue;
+            PORTC &= ~(1 << PC0);
+            PORTD |= (1 << PD4);
+            _delay_us(60);
+            PORTD &= ~(1 << PD4);
+            _delay_us(10);
+            wait_rise = 0;
+            wait_tick = 1;
+            rise_cnt = 0;
+            continue;
+         }
+         _delay_us(5);
+         rise_cnt += 5;
       }
       if (wait_tick)
       {
 
          while (PIND & (1 << PD2))
             ;
-         PORTC |= (1 << PC0);
          _delay_us(40);
-         PORTC &= ~(1 << PC0);
          if (PIND & (1 << PD2))
          {
             cmd += 1 << tick_idx;
@@ -117,18 +128,23 @@ void main(void)
 
          if (tick_idx > 7)
          {
-            wait_tick = false;
+            tick_idx = 0;
+            wait_tick = 0;
             if (cmd == 0x33)
             {
                n = serial[byte_idx];
                wait_r = 1;
             }
+            else
+            {
+               wr = 1;
+            }
+            cmd = 0;
          }
          continue;
       }
       if (start_rt)
       {
-         // PORTC &= ~(1 << PC0);
          if (n % 2)
          {
             _delay_us(2);
@@ -147,14 +163,14 @@ void main(void)
             ri = 0;
             byte_idx++;
 
+            wr = 1;
             if (byte_idx >= bytes_len)
             {
                wait_r = 0;
                byte_idx = 0;
                PORTC |= (1 << PC0);
-               _delay_ms(2000);
+               _delay_ms(1000);
                PORTC &= ~(1 << PC0);
-               wr = 1;
                continue;
             }
             else
