@@ -12,35 +12,36 @@
 #define MAX_WAITING_FOR_RISE 1000
 #define RISE_STEP 5
 
-volatile uint8_t wr = 0;
-volatile char wait_reset = 0;
-volatile uint16_t reset_counter = 0;
-volatile uint16_t wait_rise = 0;
-volatile uint16_t rise_cnt = 0;
-volatile char wait_tick = 0;
-volatile char tick_idx = 0;
-uint8_t cmd = 0;
-volatile uint8_t wait_r = 0;
-volatile uint8_t ri = 0;
-volatile uint8_t n = 0xC5;
+#define S_IDLE 0
+#define S_RSET 1
+#define S_PRSN 2
+#define S_RCMD 3
+#define S_DIAL 4
+#define S_RSND 5
+
+volatile uint8_t s = S_IDLE;
+
+volatile uint16_t rise_cnt;
+volatile char tick_idx;
+uint8_t cmd;
+volatile uint8_t ri;
+volatile uint8_t n;
 
 char bytes_len = 8;
-volatile uint8_t byte_idx = 0;
+volatile uint8_t byte_idx;
 const uint8_t serial[8] = {0x01, 0xF1, 0xCF, 0x7B, 0x14, 0, 0, 0xDD};
-volatile uint8_t start_rt = 0;
 
 ISR(INT0_vect)
 {
-   if (wait_r)
+   if (s == S_DIAL)
    {
       PORTD |= (1 << PD4);
-      start_rt = 1;
+      s = S_RSND;
       return;
    }
-   if (wr)
+   if (s == S_IDLE)
    {
-      wait_rise = 1;
-      wr = 0;
+      s = S_RSET;
    }
 }
 
@@ -60,25 +61,22 @@ void main(void)
    PORTC &= ~(1 << PC0);
 
    sei();
-   wr = 1;
    while (1)
    {
-      if (wait_rise)
+      if (s == S_RSET)
       {
          if (rise_cnt > MAX_WAITING_FOR_RISE)
          {
-            wait_rise = 0;
+            s = S_IDLE;
             rise_cnt = 0;
-            wr = 1;
             continue;
          }
          if (PIND & (1 << PD2))
          {
             if (rise_cnt < MIN_RESET_LENGTH)
             {
-               wait_rise = 0;
+               s = S_IDLE;
                rise_cnt = 0;
-               wr = 1;
                continue;
             }
             _delay_us(15);
@@ -87,15 +85,14 @@ void main(void)
             _delay_us(60);
             PORTD &= ~(1 << PD4);
             _delay_us(10);
-            wait_rise = 0;
-            wait_tick = 1;
+            s = S_RCMD;
             rise_cnt = 0;
             continue;
          }
          _delay_us(RISE_STEP);
          rise_cnt += RISE_STEP;
       }
-      if (wait_tick)
+      if (s == S_RCMD)
       {
 
          while (PIND & (1 << PD2))
@@ -115,21 +112,20 @@ void main(void)
          if (tick_idx > 7)
          {
             tick_idx = 0;
-            wait_tick = 0;
             if (cmd == 0x33)
             {
                n = serial[byte_idx];
-               wait_r = 1;
+               s = S_DIAL;
             }
             else
             {
-               wr = 1;
+               s = S_IDLE;
             }
             cmd = 0;
          }
          continue;
       }
-      if (start_rt)
+      if (s == S_RSND)
       {
          if (n % 2)
          {
@@ -141,18 +137,17 @@ void main(void)
             _delay_us(40);
             PORTD &= ~(1 << PD4);
          }
+         s = S_DIAL;
          n = n >> 1;
          ri++;
-         start_rt = 0;
          if (ri > 7)
          {
             ri = 0;
             byte_idx++;
 
-            wr = 1;
             if (byte_idx >= bytes_len)
             {
-               wait_r = 0;
+               s = S_IDLE;
                byte_idx = 0;
                PORTC |= (1 << PC0);
                _delay_ms(1000);
