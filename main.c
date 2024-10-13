@@ -13,6 +13,7 @@
 #define RESET_LENGTH 350
 #define MAX_WAITING_FOR_RISE 200
 
+volatile uint8_t wr = 0;
 volatile char wait_reset = 0;
 volatile uint16_t reset_counter = 0;
 volatile uint16_t wait_rise = 0;
@@ -21,15 +22,26 @@ volatile char tick_idx = 0;
 uint8_t cmd = 0;
 volatile uint8_t wait_r = 0;
 volatile uint8_t ri = 0;
-uint8_t n = 0xC5;
+volatile uint8_t n = 0xC5;
 
 char bytes_len = 8;
 volatile uint8_t byte_idx = 0;
 const uint8_t serial[8] = {0x01, 0xF1, 0xCF, 0x7B, 0x14, 0, 0, 0xDD};
+volatile uint8_t start_rt = 0;
 
 ISR(INT0_vect)
 {
-   wait_reset = 1;
+   if (wait_r)
+   {
+      PORTD |= (1 << PD4);
+      start_rt = 1;
+      return;
+   }
+   if (wr)
+   {
+      wait_reset = 1;
+      wr = 0;
+   }
 }
 
 gpin_t onewire_pin = {&PORTD, &PIND, &DDRD, PD2};
@@ -50,7 +62,7 @@ void main(void)
    PORTC &= ~(1 << PC0);
 
    sei();
-
+   wr = 1;
    while (1)
    {
       if (wait_reset)
@@ -59,7 +71,6 @@ void main(void)
          {
             wait_reset = 0;
             wait_rise = 1;
-            cli();
             reset_counter = 0;
          }
          else
@@ -72,6 +83,7 @@ void main(void)
 
       if (wait_rise)
       {
+
          while (!(PIND & (1 << PD2)))
             ;
          wait_rise = 0;
@@ -108,41 +120,49 @@ void main(void)
             wait_tick = false;
             if (cmd == 0x33)
             {
+               n = serial[byte_idx];
                wait_r = 1;
             }
          }
          continue;
       }
-      if (wait_r)
+      if (start_rt)
       {
-         if (byte_idx >= bytes_len)
+         // PORTC &= ~(1 << PC0);
+         if (n % 2)
          {
-            wait_r = 0;
-            byte_idx = 0;
-            PORTC |= (1 << PC0);
-            _delay_ms(100);
-            PORTC &= ~(1 << PC0);
-            sei();
-            continue;
+            _delay_us(2);
+            PORTD &= ~(1 << PD4);
          }
-         PORTC &= ~(1 << PC0);
+         else
+         {
+            _delay_us(40);
+            PORTD &= ~(1 << PD4);
+         }
+         n = n >> 1;
+         ri++;
+         start_rt = 0;
          if (ri > 7)
          {
             ri = 0;
             byte_idx++;
-            continue;
+
+            if (byte_idx >= bytes_len)
+            {
+               wait_r = 0;
+               byte_idx = 0;
+               PORTC |= (1 << PC0);
+               _delay_ms(2000);
+               PORTC &= ~(1 << PC0);
+               wr = 1;
+               continue;
+            }
+            else
+            {
+               n = serial[byte_idx];
+               continue;
+            }
          }
-         while (PIND & (1 << PD2))
-            ;
-         PORTC |= (1 << PC0);
-         n = serial[byte_idx];
-         if ((n >> ri) % 2 == 0)
-         {
-            PORTD |= (1 << PD4);
-            _delay_us(60);
-            PORTD &= ~(1 << PD4);
-         }
-         ri++;
       }
    }
 }
