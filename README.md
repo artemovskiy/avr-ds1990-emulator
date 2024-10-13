@@ -1,3 +1,5 @@
+![image](https://img.shields.io/badge/C-00599C?style=for-the-badge&logo=c&logoColor=white)
+
 # iButton (Dallas Touch Memory DS1990) emulator
 
 This is a simple device consisting from an AVR MCU and a transistor that emulates DS1990 key with arbitrary serail number written to EEPROM. This is just a pet project, not a production reade device programm. 
