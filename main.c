@@ -3,10 +3,12 @@
 #endif
 
 #define BAUD 9600L
+#define UBRR_value F_CPU / (BAUD * 16) - 1
 
+#include <avr/eeprom.h>
+#include <avr/interrupt.h>
 #include <avr/io.h>
 #include <util/delay.h>
-#include <avr/interrupt.h>
 
 #define MIN_RESET_LENGTH 300
 #define MAX_WAITING_FOR_RISE 1000
@@ -19,6 +21,8 @@
 #define S_DIAL 4
 #define S_RSND 5
 
+#define SERIAL_LENGTH 8
+
 uint8_t s = S_IDLE;
 uint16_t reset_time_cnt;
 uint8_t tick_idx;
@@ -26,9 +30,43 @@ uint8_t recieved_bit_index;
 uint8_t current_byte;
 uint8_t response_bit_idx;
 uint8_t response_byte_idx;
+uint8_t serial[SERIAL_LENGTH];
 
-#define SERIAL_LENGTH 8
-const uint8_t serial[8] = {0x01, 0xF1, 0xCF, 0x7B, 0x14, 0, 0, 0xDD};
+void UART_SendByte(uint8_t u8Data)
+{
+   // Wait until last byte has been transmitted
+   while ((UCSR0A & (1 << UDRE0)) == 0)
+      ;
+
+   // Transmit data
+   UDR0 = u8Data;
+}
+
+char digitToASCII(char d)
+{
+   if (0 <= d && d <= 9)
+   {
+      return d + '0';
+   }
+   if (0xA <= d && d <= 0xF)
+   {
+      return d - 10 + 'A';
+   }
+   return 0;
+}
+void bytoToHexASCII(uint8_t byte, char *result)
+{
+   result[1] = digitToASCII(byte / 16);
+   result[0] = digitToASCII(byte % 16);
+}
+void snedInt(uint8_t tmp)
+{
+   char out[2];
+   bytoToHexASCII(tmp, out);
+
+   UART_SendByte(out[1]);
+   UART_SendByte(out[0]);
+}
 
 ISR(INT0_vect)
 {
@@ -49,10 +87,21 @@ void main(void)
    DDRC |= (1 << PC0);
    DDRD = (1 << PD4);
    PORTD &= ~(1 << PD4);
-
+   // uart setup
+   UCSR0B |= (1 << TXEN0);
+   UCSR0C |= (1 << UCSZ01) | (1 << UCSZ00);
+   UBRR0 = UBRR_value;
    // int setup
    EICRA |= (1 << ISC01); // trigger on falling edge
    EIMSK |= (1 << INT0);  // enable int on INT0 pin
+   // read the serial and transmit to UART
+   eeprom_read_block((void *)&serial, (const void *)0, sizeof(serial));
+   for (uint8_t i = 0; i < SERIAL_LENGTH; i++)
+   {
+      snedInt(serial[i]);
+   }
+   UART_SendByte('\r');
+   UART_SendByte('\n');
 
    // init completed signal
    PORTC |= (1 << PC0);
