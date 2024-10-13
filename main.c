@@ -7,11 +7,10 @@
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
-#include "onewire.h"
-#include "pindef.h"
 
-#define RESET_LENGTH 350
-#define MAX_WAITING_FOR_RISE 200
+#define MIN_RESET_LENGTH 300
+#define MAX_WAITING_FOR_RISE 1000
+#define RISE_STEP 5
 
 volatile uint8_t wr = 0;
 volatile char wait_reset = 0;
@@ -40,13 +39,11 @@ ISR(INT0_vect)
    }
    if (wr)
    {
-      wait_reset = 1;
+      wait_rise = 1;
       wr = 0;
    }
 }
 
-gpin_t onewire_pin = {&PORTD, &PIND, &DDRD, PD2};
-gpin_t D_pin = {&PORTC, &PINC, &DDRC, PC0};
 void main(void)
 {
    DDRC |= (1 << PC0);
@@ -66,23 +63,6 @@ void main(void)
    wr = 1;
    while (1)
    {
-      if (wait_reset)
-      {
-
-         if (reset_counter >= RESET_LENGTH)
-         {
-            wait_reset = 0;
-            wait_rise = 1;
-            reset_counter = 0;
-         }
-         else
-         {
-            _delay_us(10);
-            reset_counter += 10;
-         }
-         continue;
-      }
-
       if (wait_rise)
       {
          if (rise_cnt > MAX_WAITING_FOR_RISE)
@@ -94,9 +74,15 @@ void main(void)
          }
          if (PIND & (1 << PD2))
          {
+            if (rise_cnt < MIN_RESET_LENGTH)
+            {
+               wait_rise = 0;
+               rise_cnt = 0;
+               wr = 1;
+               continue;
+            }
             _delay_us(15);
 
-            PORTC &= ~(1 << PC0);
             PORTD |= (1 << PD4);
             _delay_us(60);
             PORTD &= ~(1 << PD4);
@@ -106,8 +92,8 @@ void main(void)
             rise_cnt = 0;
             continue;
          }
-         _delay_us(5);
-         rise_cnt += 5;
+         _delay_us(RISE_STEP);
+         rise_cnt += RISE_STEP;
       }
       if (wait_tick)
       {
